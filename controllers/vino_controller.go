@@ -20,7 +20,10 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -38,12 +41,76 @@ type VinoReconciler struct {
 // +kubebuilder:rbac:groups=airship.airshipit.org,resources=vinoes/status,verbs=get;update;patch
 
 func (r *VinoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
-	_ = r.Log.WithValues("vino", req.NamespacedName)
+	ctx := context.Background()
+	logger := r.Log.WithValues("vino", req.NamespacedName)
 
 	// your logic here
 
+	vino := &airshipv1.Vino{}
+	if err := r.Get(ctx, req.NamespacedName, vino); err != nil {
+		logger.Error(err, "unable to fetch VINO object")
+		// we'll ignore not-found errors, since they can't be fixed by an immediate
+		// requeue (we'll need to wait for a new notification), and we can get them
+		// on deleted requests.
+		return ctrl.Result{}, err
+	}
+
+
 	return ctrl.Result{}, nil
+}
+
+func (r *VinoReconciler) ensureConfigMap(ctx context.Context, name types.NamespacedName, vino *airshipv1.Vino) error {
+	generatedCm, err := r.buildConfigMap(ctx, name, vino)
+	if err != nil {
+		return err
+	}
+
+	currentCm, err := r.getCurrentConfigMap(name, vino)
+	if err != nil {
+		return err
+	}
+
+	if needsUpdate(generatedCm, currentCm) {
+		err := r.Client.Update(ctx, generatedCm)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *VinoReconciler) buildConfigMap(ctx context.Context, name types.NamespacedName, vino *airshipv1.Vino) (*corev1.ConfigMap, error) {
+	r.Log.Info("Generating new config map for vino object")
+
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name.Name,
+			Namespace: name.Namespace,
+		},
+		Data: make(map[string]string),
+	}, nil
+}
+
+func (r *VinoReconciler) getCurrentConfigMap(name types.NamespacedName, vino *airshipv1.Vino) (*corev1.ConfigMap, error) {
+	r.Log.Info("Getting current config map for vino object")
+
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name.Name,
+			Namespace: name.Namespace,
+		},
+		Data: make(map[string]string),
+	}, nil
+}
+
+func needsUpdate(generated, current *corev1.ConfigMap) bool {
+	for key, value := range generated.Data {
+		if current.Data[key] != value {
+			return false
+		}
+	}
+	return true
+
 }
 
 func (r *VinoReconciler) SetupWithManager(mgr ctrl.Manager) error {

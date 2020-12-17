@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -112,11 +113,6 @@ type DiskOptions struct {
 	Sparse bool `json:"sparse,omitempty"`
 }
 
-// VinoStatus defines the observed state of Vino
-type VinoStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-}
-
 // +kubebuilder:object:root=true
 
 // Vino is the Schema for the vinoes API
@@ -140,3 +136,29 @@ type VinoList struct {
 func init() {
 	SchemeBuilder.Register(&Vino{}, &VinoList{})
 }
+
+// VinoStatus defines the observed state of Vino
+type VinoStatus struct {
+	ConfigMapRef         corev1.ObjectReference `json:"configMapRef,omitempty"`
+	Conditions           []Condition            `json:"conditions,omitempty"`
+	ConfigMapReady       bool
+	VirtualMachinesReady bool
+	NetworkingReady      bool
+	DaemonSetReady       bool
+}
+
+// Condition indicates operational status of VINO CR
+type Condition struct {
+	Status  corev1.ConditionStatus
+	Type    ConditionType
+	Reason  string
+	Message string
+}
+
+type ConditionType string
+
+const (
+	ConditionTypeError ConditionType = "Error"
+	ConditionTypeInfo  ConditionType = "Info"
+	ConditionTypeReady ConditionType = "Ready"
+)

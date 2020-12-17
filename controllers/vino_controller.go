@@ -20,7 +20,9 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierror "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -55,6 +57,63 @@ func (r *VinoReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
+	err := r.ensureConfigMap(ctx, req.NamespacedName, vino)
+	if err != nil {
+		vino.Status.Conditions = append([]airshipv1.Condition{
+			{
+				Status:  corev1.ConditionFalse,
+				Reason:  "Error has occured while making sure that ConfigMap for VINO is in correct state",
+				Message: err.Error(),
+				Type:    airshipv1.ConditionTypeReady,
+			},
+		}, vino.Status.Conditions...)
+		vino.Status.ConfigMapReady = false
+	} else {
+		vino.Status.ConfigMapReady = true
+	}
+
+	err = r.ensureDaemonSet(ctx, req.NamespacedName, vino)
+	if err != nil {
+		vino.Status.Conditions = append([]airshipv1.Condition{
+			{
+				Status:  corev1.ConditionFalse,
+				Reason:  "Error has occured while making sure that VINO Daemonset is installed on kubernetes nodes",
+				Message: err.Error(),
+				Type:    airshipv1.ConditionTypeReady,
+			},
+		}, vino.Status.Conditions...)
+		vino.Status.DaemonSetReady = false
+	} else {
+		vino.Status.DaemonSetReady = true
+	}
+
+	if err != nil {
+		vino.Status.Conditions = append([]airshipv1.Condition{
+			{
+				Status:  corev1.ConditionFalse,
+				Reason:  "Error has occured while checking if VINO networking stack is enforced on kubernetes nodes",
+				Message: err.Error(),
+				Type:    airshipv1.ConditionTypeReady,
+			},
+		}, vino.Status.Conditions...)
+		vino.Status.NetworkingReady = false
+	} else {
+		vino.Status.NetworkingReady = true
+	}
+
+	if err != nil {
+		vino.Status.Conditions = append([]airshipv1.Condition{
+			{
+				Status:  corev1.ConditionFalse,
+				Reason:  "Error has occured while checking if virtual machines to be ready",
+				Message: err.Error(),
+				Type:    airshipv1.ConditionTypeReady,
+			},
+		}, vino.Status.Conditions...)
+		vino.Status.VirtualMachinesReady = false
+	} else {
+		vino.Status.VirtualMachinesReady = true
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -84,7 +143,7 @@ func (r *VinoReconciler) buildConfigMap(ctx context.Context, name types.Namespac
 
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name.Name,
+			Name:      name.Name,
 			Namespace: name.Namespace,
 		},
 		Data: make(map[string]string),
@@ -93,14 +152,38 @@ func (r *VinoReconciler) buildConfigMap(ctx context.Context, name types.Namespac
 
 func (r *VinoReconciler) getCurrentConfigMap(name types.NamespacedName, vino *airshipv1.Vino) (*corev1.ConfigMap, error) {
 	r.Log.Info("Getting current config map for vino object")
-
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name.Name,
+			Name:      name.Name,
 			Namespace: name.Namespace,
 		},
 		Data: make(map[string]string),
 	}, nil
+}
+
+func (r *VinoReconciler) checkNodeNetworking(name types.NamespacedName, vino *airshipv1.Vino) error {
+	r.Log.Info("Checking networking stack configured on kubernetes nodes")
+	return nil
+}
+
+func (r *VinoReconciler) checkVMs(name types.NamespacedName, vino *airshipv1.Vino) error {
+	r.Log.Info("Checking virtual machines are configured on kubernetes nodes")
+	return nil
+}
+
+func (r *VinoReconciler) setReadyStatus(vino *airshipv1.Vino) {
+	if vino.Status.ConfigMapReady && vino.Status.DaemonSetReady &&
+		vino.Status.NetworkingReady && vino.Status.VirtualMachinesReady {
+		r.Log.Info("All VINO components are in ready state, setting VINO CR to ready state")
+		vino.Status.Conditions = append([]airshipv1.Condition{
+			{
+				Status:  corev1.ConditionTrue,
+				Reason:  "Networking, Virtual Machines, DaemonSet and ConfigMap is in ready state",
+				Message: "All VINO components are in ready state, setting VINO CR to ready state",
+				Type:    airshipv1.ConditionTypeReady,
+			},
+		}, vino.Status.Conditions...)
+	}
 }
 
 func needsUpdate(generated, current *corev1.ConfigMap) bool {
@@ -110,11 +193,57 @@ func needsUpdate(generated, current *corev1.ConfigMap) bool {
 		}
 	}
 	return true
+}
 
+func (r *VinoReconciler) ensureDaemonSet(ctx context.Context, name types.NamespacedName, vino *airshipv1.Vino) error {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name.Name,
+			Namespace: name.Namespace,
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"vino": name.Name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"vino": name.Name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Image: "busybox",
+							Command: []string{"sh", "-c", "set -xe while true; do ip -4 a; sleep 20; done"},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := applyRuntimeObject(ctx, name, ds, r.Client); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *VinoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&airshipv1.Vino{}).
 		Complete(r)
+}
+
+func applyRuntimeObject(ctx context.Context, key client.ObjectKey, obj runtime.Object, c client.Client) error {
+	getObj := obj.DeepCopyObject()
+	switch err := c.Get(ctx, key, getObj); {
+	case apierror.IsNotFound(err):
+		return c.Create(ctx, obj)
+	case err == nil:
+		return c.Update(ctx, obj)
+	default:
+		return err
+	}
 }

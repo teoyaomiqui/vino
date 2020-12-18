@@ -6,6 +6,8 @@ CRD_OPTIONS ?= "crd:trivialVersions=true"
 
 TOOLBINDIR          := tools/bin
 
+KIND_CLUSTER_NAME ?= vino
+
 # linting
 LINTER              := $(TOOLBINDIR)/golangci-lint
 LINTER_CONFIG       := .golangci.yaml
@@ -30,6 +32,10 @@ manager: generate fmt vet
 # Run against the configured Kubernetes cluster in ~/.kube/config
 run: generate fmt vet manifests
 	go run ./main.go
+
+# Build docker container and load it into running kind cluster
+kind-load-image: docker-build
+	kind load docker-image ${IMG} --name ${KIND_CLUSTER_NAME}
 
 # Install CRDs into a cluster
 install: manifests
@@ -84,6 +90,11 @@ CONTROLLER_GEN=$(GOBIN)/controller-gen
 else
 CONTROLLER_GEN=$(shell which controller-gen)
 endif
+
+# Create kind cluster
+kind-create:
+	kind create cluster --name ${KIND_CLUSTER_NAME}
+
 
 .PHONY: lint
 lint: $(LINTER)

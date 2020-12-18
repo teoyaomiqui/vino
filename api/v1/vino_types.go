@@ -17,31 +17,37 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // VinoSpec defines the desired state of Vino
 type VinoSpec struct {
-	//Define nodelabel parameters
+	// Define nodelabel parameters
 	NodeSelector *NodeSelector `json:"nodelabels,omitempty"`
-	//Define CPU configuration
-	Configuration *CPUConfiguration `json:"configuration,omitempty"`
-	//Define network Parametes
+	// Define CPU configuration
+	CPUConfiguration *CPUConfiguration `json:"configuration,omitempty"`
+	// Define network Parametes
 	Network *Network `json:"networks,omitempty"`
-	//Define node details
+	// Define node details
 	Node []NodeSet `json:"nodes,omitempty"`
+	// DaemonSetOptions defines how vino will spawn daemonset on nodes
+	DaemonSetOptions DaemonSetOptions `json:"daemonSetOptions,omitempty"`
 }
 
+// NodeSelector identifies nodes to create VMs on
 type NodeSelector struct {
 	// Node type needs to specified
 	MatchLabels map[string]string `json:"matchLabels"`
 }
+
+// CPUConfiguration CPU node configuration
 type CPUConfiguration struct {
 	//Exclude CPU example 0-4,54-60
 	CPUExclude string `json:"cpuExclude,omitempty"`
 }
 
-//Define network specs
+// Network defines libvirt networks
 type Network struct {
 	//Network Parameter defined
 	Name            string    `json:"name,omitempty"`
@@ -52,53 +58,54 @@ type Network struct {
 	Routes          *VMRoutes `json:"routes,omitempty"`
 }
 
-//Routes defined
+// VMRoutes defined
 type VMRoutes struct {
 	To  string `json:"to,omitempty"`
 	Via string `json:"via,omitempty"`
 }
 
-//VinoSpec node definitions
+//NodeSet node definitions
 type NodeSet struct {
-
 	//Parameter for Node master or worker-standard
 	Name                      string              `json:"name,omitempty"`
-	NodeLabel                 *VMNodeFlavor       `json:"labels,omitempty"`
 	Count                     int                 `json:"count,omitempty"`
-	LibvirtTemplateDefinition *LibvirtTemplate    `json:"libvirtTemplateDefinition,omitempty"`
+	NodeLabel                 *VMNodeFlavor       `json:"labels,omitempty"`
+	LibvirtTemplateDefinition NamespacedName      `json:"libvirtTemplate,omitempty"`
 	NetworkInterface          *NetworkInterface   `json:"networkInterfaces,omitempty"`
 	DiskDrives                *DiskDrivesTemplate `json:"diskDrives,omitempty"`
 }
 
-//Define node flavor
+// VMNodeFlavor labels for node to be annotated
 type VMNodeFlavor struct {
 	VMFlavor map[string]string `json:"vmFlavor,omitempty"`
 }
 
-//Define Libvirt template
-type LibvirtTemplate struct {
+// NamespacedName to be used to spawn VMs
+type NamespacedName struct {
 	Name      string `json:"Name,omitempty"`
 	Namespace string `json:"Namespace,omitempty"`
 }
 
-type NetworkInterface struct {
+// DaemonSetOptions be used to spawn vino-builder, libvrirt, sushy an
+type DaemonSetOptions struct {
+	Template     NamespacedName `json:"namespacedName,omitempty"`
+	LibvirtImage string         `json:"libvirtImage,omitempty"`
+	SushyImage   string         `json:"sushyImage,omitempty"`
+	VinoBuilder  string         `json:"vinoBuilderImage,omitempty"`
+	NodeLabeler  string         `json:"nodeAnnotatorImage,omitempty"`
+}
 
+// NetworkInterface define interface on the VM
+type NetworkInterface struct {
 	//Define parameter for netwok interfaces
 	Name        string            `json:"name,omitempty"`
 	Type        string            `json:"type,omitempty"`
 	NetworkName string            `json:"network,omitempty"`
 	MTU         int               `json:"mtu,omitempty"`
-	Options     *InterfaceOptions `json:"options,omitempty"`
+	Options     map[string]string `json:"options,omitempty"`
 }
 
-//VinoSpec Network option parameter definition
-type InterfaceOptions struct {
-	InterfaceName []string          `json:"interfaceName,omitempty"`
-	BridgeName    map[string]string `json:"bridgeName,omitempty"`
-	Vlan          int               `json:"vlan,omitempty"`
-}
-
-//Define disk drive for the nodes
+// DiskDrivesTemplate defines diks on the VM
 type DiskDrivesTemplate struct {
 	Name    string       `json:"name,omitempty"`
 	Type    string       `json:"type,omitempty"`
@@ -106,15 +113,10 @@ type DiskDrivesTemplate struct {
 	Options *DiskOptions `json:"options,omitempty"`
 }
 
-//Define disk size
+// DiskOptions disk options
 type DiskOptions struct {
 	SizeGB int  `json:"sizeGb,omitempty"`
 	Sparse bool `json:"sparse,omitempty"`
-}
-
-// VinoStatus defines the observed state of Vino
-type VinoStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 }
 
 // +kubebuilder:object:root=true
@@ -140,3 +142,30 @@ type VinoList struct {
 func init() {
 	SchemeBuilder.Register(&Vino{}, &VinoList{})
 }
+
+// VinoStatus defines the observed state of Vino
+type VinoStatus struct {
+	ConfigMapRef         corev1.ObjectReference `json:"configMapRef,omitempty"`
+	Conditions           []Condition            `json:"conditions,omitempty"`
+	ConfigMapReady       bool
+	VirtualMachinesReady bool
+	NetworkingReady      bool
+	DaemonSetReady       bool
+}
+
+// Condition indicates operational status of VINO CR
+type Condition struct {
+	Status  corev1.ConditionStatus
+	Type    ConditionType
+	Reason  string
+	Message string
+}
+
+// ConditionType type of the condition
+type ConditionType string
+
+const (
+	ConditionTypeError ConditionType = "Error"
+	ConditionTypeInfo  ConditionType = "Info"
+	ConditionTypeReady ConditionType = "Ready"
+)
